@@ -1,0 +1,80 @@
+version: "3"
+
+vars:
+  BIN_DIR: "{{.ROOT_DIR}}/bin"
+  GOLANGCI_LINT_VERSION: v2.12.1
+  ERRCHECK_VERSION: v1.20.0
+  INEFFASSIGN_VERSION: v0.2.0
+  GOCYCLO_VERSION: v0.6.0
+  GOCYCLO_OVER: "70"
+  GOVULNCHECK_VERSION: latest
+
+tasks:
+  setup:
+    desc: Install lint tools into ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh |
+        sh -s -- -b {{.BIN_DIR}} {{.GOLANGCI_LINT_VERSION}}
+      - GOBIN={{.BIN_DIR}} go install github.com/kisielk/errcheck@{{.ERRCHECK_VERSION}}
+      - GOBIN={{.BIN_DIR}} go install github.com/gordonklaus/ineffassign@{{.INEFFASSIGN_VERSION}}
+      - GOBIN={{.BIN_DIR}} go install github.com/fzipp/gocyclo/cmd/gocyclo@{{.GOCYCLO_VERSION}}
+      - GOBIN={{.BIN_DIR}} go install golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}}
+
+  setup:ensure:
+    desc: Install lint tools if any are missing from ./bin
+    internal: true
+    status:
+      - test -x {{.BIN_DIR}}/golangci-lint
+      - test -x {{.BIN_DIR}}/errcheck
+      - test -x {{.BIN_DIR}}/ineffassign
+      - test -x {{.BIN_DIR}}/gocyclo
+      - test -x {{.BIN_DIR}}/govulncheck
+    cmds:
+      - task: setup
+
+  lint:
+    desc: Run golangci-lint
+    deps: [setup:ensure]
+    cmds:
+      - "{{.BIN_DIR}}/golangci-lint run ./..."
+
+  errcheck:
+    desc: Run errcheck
+    deps: [setup:ensure]
+    cmds:
+      - "{{.BIN_DIR}}/errcheck ./..."
+
+  ineffassign:
+    desc: Run ineffassign
+    deps: [setup:ensure]
+    cmds:
+      - "{{.BIN_DIR}}/ineffassign ./..."
+
+  gocyclo:
+    desc: Run gocyclo (functions over complexity threshold)
+    deps: [setup:ensure]
+    cmds:
+      - "{{.BIN_DIR}}/gocyclo -over {{.GOCYCLO_OVER}} ."
+
+  govulncheck:
+    desc: Run govulncheck
+    deps: [setup:ensure]
+    cmds:
+      - "{{.BIN_DIR}}/govulncheck ./..."
+
+  test:
+    desc: Run Go tests
+    cmds:
+      - go test ./...
+
+  build:
+    desc: Build movie-info binary
+    cmds:
+      - go build -o movie-info .
+
+  run:
+    desc: Build and run (pass args via -- e.g. task run -- "The Matrix")
+    cmds:
+      - go run . {{.CLI_ARGS}}
