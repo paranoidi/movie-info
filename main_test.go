@@ -18,6 +18,8 @@ func TestMovieNameFromDirName(t *testing.T) {
 		"The.Matrix.DTS-HD.foo":        "The Matrix",
 		"The.Matrix.Bluray.foo":        "The Matrix",
 		"1917.2019.1080p.foo":          "1917",
+		"The.Matrix.UNRATED.foo":       "The Matrix",
+		"The.Matrix.PROPER.foo":        "The Matrix",
 	}
 	for in, want := range cases {
 		if got := movieNameFromDirName(in); got != want {

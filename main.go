@@ -29,7 +29,7 @@ const cacheVersion = 1
 var imdbIDRe = regexp.MustCompile(`^tt\d+$`)
 var imdbIDInTextRe = regexp.MustCompile(`tt\d+`)
 var yearRe = regexp.MustCompile(`\b(19|20)\d{2}\b`)
-var cutoffTagRe = regexp.MustCompile(`(?i)\b(1080p|720p|2160p|limited|remux|remastered|hybrid|dts-hd|dts|webrip|blu-ray|bluray)\b`)
+var cutoffTagRe = regexp.MustCompile(`(?i)\b(1080p|720p|2160p|limited|remux|remastered|hybrid|dts-hd|dts|webrip|blu-ray|bluray|unrated|proper)\b`)
 
 // MovieInfo is the subset of movie data we display and cache.
 type MovieInfo struct {
