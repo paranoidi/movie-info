@@ -29,6 +29,7 @@ const cacheVersion = 1
 var imdbIDRe = regexp.MustCompile(`^tt\d+$`)
 var imdbIDInTextRe = regexp.MustCompile(`tt\d+`)
 var yearRe = regexp.MustCompile(`\b(19|20)\d{2}\b`)
+var cutoffTagRe = regexp.MustCompile(`(?i)\b(1080p|720p|2160p|limited|remux|remastered|hybrid|dts-hd|dts|webrip|blu-ray|bluray)\b`)
 
 // MovieInfo is the subset of movie data we display and cache.
 type MovieInfo struct {
@@ -192,6 +193,7 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 		}
 	}
 
+	var stalePoster []byte
 	if dirPath != "" {
 		if cache, ok := loadCache(dirPath); ok {
 			if short {
@@ -201,6 +203,10 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 			renderPoster(cache.posterBytes(), debug, effImageProtocol)
 			printInfo(cache.MovieInfo, !effShowTitle, effWrap)
 			return nil
+		} else if cache != nil {
+			// Old cache schema forces a re-fetch of movie info, but the poster
+			// image itself never changes, so reuse it instead of re-downloading.
+			stalePoster = cache.posterBytes()
 		}
 	}
 
@@ -232,7 +238,10 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 		return err
 	}
 
-	posterData, _ := fetchPosterBytes(movie.PosterPath)
+	posterData := stalePoster
+	if len(posterData) == 0 {
+		posterData, _ = fetchPosterBytes(movie.PosterPath)
+	}
 	info := movieInfoFrom(movie)
 	if short {
 		printShortInfo(info)
@@ -251,17 +260,20 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 }
 
 // loadCache reads dir/.movie-info.json; ok is false if it's missing, unparsable,
-// or older than the schema this build writes (forcing a fresh fetch).
+// or older than the schema this build writes (forcing a fresh fetch). When the
+// file parses but is stale, the cache is still returned (ok=false) so callers
+// can salvage fields—like the poster image—that don't change between schema
+// versions.
 func loadCache(dir string) (*movieCache, bool) {
 	data, err := os.ReadFile(filepath.Join(dir, cacheFileName))
 	if err != nil {
 		return nil, false
 	}
 	var c movieCache
-	if err := json.Unmarshal(data, &c); err != nil || c.Version < cacheVersion {
+	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, false
 	}
-	return &c, true
+	return &c, c.Version >= cacheVersion
 }
 
 func saveCache(dir string, info MovieInfo, posterData []byte) error {
@@ -371,13 +383,17 @@ func imdbIDFromDir(dir string) (string, error) {
 
 // movieNameFromDirName derives a search title from a scene-style directory name,
 // e.g. "The.Matrix.1999.foo.bar.asdf" -> "The Matrix", by treating dots/underscores
-// as spaces and cutting off at the first 4-digit year.
+// as spaces and cutting off at the first 4-digit year or scene tag (1080p, remux, etc).
 func movieNameFromDirName(name string) string {
 	cleaned := strings.NewReplacer(".", " ", "_", " ").Replace(name)
-	if loc := yearRe.FindStringIndex(cleaned); loc != nil {
-		cleaned = cleaned[:loc[0]]
+	cut := len(cleaned)
+	if loc := yearRe.FindStringIndex(cleaned); loc != nil && loc[0] < cut {
+		cut = loc[0]
 	}
-	return strings.TrimSpace(cleaned)
+	if loc := cutoffTagRe.FindStringIndex(cleaned); loc != nil && loc[0] < cut {
+		cut = loc[0]
+	}
+	return strings.TrimSpace(cleaned[:cut])
 }
 
 // fetchPosterBytes downloads the raw poster image bytes (jpeg) for caching/rendering.
