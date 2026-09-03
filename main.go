@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -51,9 +52,10 @@ type movieCache struct {
 // (~/.config/movie-info/config.json on Linux if XDG_CONFIG_HOME is unset).
 // ShowTitle/Wrap are pointers so "absent" is distinguishable from "false"/"0".
 type Config struct {
-	APIKey    string `json:"api_key,omitempty"`
-	ShowTitle *bool  `json:"show_title,omitempty"`
-	Wrap      *int   `json:"wrap,omitempty"`
+	APIKey        string `json:"api_key,omitempty"`
+	ShowTitle     *bool  `json:"show_title,omitempty"`
+	Wrap          *int   `json:"wrap,omitempty"`
+	ImageProtocol string `json:"image_protocol,omitempty"`
 }
 
 // configPath returns $XDG_CONFIG_HOME/movie-info/config.json (or the platform
@@ -90,7 +92,8 @@ func loadConfig() (*Config, error) {
 const configTemplate = `{
   "api_key": "",
   "show_title": false,
-  "wrap": 79
+  "wrap": 79,
+  "image_protocol": "auto"
 }
 `
 
@@ -117,6 +120,9 @@ func initConfig() error {
 func main() {
 	showTitle := flag.Bool("show-title", false, "show the movie title/year (hidden by default, e.g. for guessing games)")
 	wrap := flag.Int("wrap", 79, "wrap text output to N characters (0 = no wrap)")
+	short := flag.Bool("short", false, "print a single line: <runtime>\\t<genres>\\t<score>")
+	debug := flag.Bool("debug", false, "print which image protocol was chosen and why")
+	imageProtocol := flag.String("image-protocol", "auto", "image protocol: auto, kitty, sixel, none (override auto-detection, e.g. wezterm/kitty behind tmux misdetect as unsupported)")
 	initFlag := flag.Bool("init", false, "create a default config file at $XDG_CONFIG_HOME/movie-info/config.json and exit")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: movie-info [flags] <movie name | imdb id>")
@@ -137,7 +143,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(flag.Args(), *showTitle, *wrap); err != nil {
+	if err := run(flag.Args(), *showTitle, *wrap, *short, *debug, *imageProtocol); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -146,7 +152,7 @@ func main() {
 // run resolves and renders the movie information for args. Any failure to do
 // so — a TMDB error, a bad cache/config file, or an unexpected panic — comes
 // back as a non-nil error so main can exit with status 1.
-func run(args []string, showTitle bool, wrap int) (err error) {
+func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageProtocol string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v", r)
@@ -169,6 +175,15 @@ func run(args []string, showTitle bool, wrap int) (err error) {
 	if !setFlags["wrap"] && cfg.Wrap != nil {
 		effWrap = *cfg.Wrap
 	}
+	effImageProtocol := imageProtocol
+	if !setFlags["image-protocol"] && cfg.ImageProtocol != "" {
+		effImageProtocol = cfg.ImageProtocol
+	}
+	switch effImageProtocol {
+	case "auto", "kitty", "sixel", "none":
+	default:
+		return fmt.Errorf("image protocol must be one of auto, kitty, sixel, none (got %q)", effImageProtocol)
+	}
 
 	dirPath := ""
 	if len(args) == 1 {
@@ -179,7 +194,11 @@ func run(args []string, showTitle bool, wrap int) (err error) {
 
 	if dirPath != "" {
 		if cache, ok := loadCache(dirPath); ok {
-			renderPoster(cache.posterBytes())
+			if short {
+				printShortInfo(cache.MovieInfo)
+				return nil
+			}
+			renderPoster(cache.posterBytes(), debug, effImageProtocol)
 			printInfo(cache.MovieInfo, !effShowTitle, effWrap)
 			return nil
 		}
@@ -214,9 +233,13 @@ func run(args []string, showTitle bool, wrap int) (err error) {
 	}
 
 	posterData, _ := fetchPosterBytes(movie.PosterPath)
-	renderPoster(posterData)
 	info := movieInfoFrom(movie)
-	printInfo(info, !effShowTitle, effWrap)
+	if short {
+		printShortInfo(info)
+	} else {
+		renderPoster(posterData, debug, effImageProtocol)
+		printInfo(info, !effShowTitle, effWrap)
+	}
 
 	if dirPath != "" {
 		if err := saveCache(dirPath, info, posterData); err != nil {
@@ -370,9 +393,27 @@ func fetchPosterBytes(posterPath string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// tmuxShowEnv returns tmux's global environment value for name, or "" if unset
+// or tmux isn't running. tmux captures this from the client that started the
+// server, so it can reveal the outer terminal's TERM_PROGRAM/KITTY_WINDOW_ID
+// even though tmux doesn't forward them into the pane's own environment.
+func tmuxShowEnv(name string) string {
+	out, err := exec.Command("tmux", "show-environment", "-g", name).Output()
+	if err != nil {
+		return ""
+	}
+	_, val, ok := strings.Cut(strings.TrimSpace(string(out)), "=")
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(val)
+}
+
 // renderPoster renders poster image bytes via kitty or sixel graphics; silently does
 // nothing if data is empty, undecodable, or the terminal supports neither protocol.
-func renderPoster(data []byte) {
+// imageProtocol overrides auto-detection ("auto", "kitty", "sixel", "none") — useful
+// when a terminal multiplexer like tmux hides the real terminal's capabilities.
+func renderPoster(data []byte, debug bool, imageProtocol string) {
 	if len(data) == 0 {
 		return
 	}
@@ -381,17 +422,76 @@ func renderPoster(data []byte) {
 		return
 	}
 
+	if debug {
+		for _, k := range []string{"TERM", "TERM_PROGRAM", "LC_TERMINAL", "VIM_TERMINAL", "KITTY_WINDOW_ID", "TMUX"} {
+			fmt.Fprintf(os.Stderr, "debug: %s=%q\n", k, os.Getenv(k))
+		}
+	}
+
+	if imageProtocol == "none" {
+		if debug {
+			fmt.Fprintln(os.Stderr, "debug: -image-protocol=none, skipping image render")
+		}
+		return
+	}
+
+	kittyCapable := imageProtocol == "kitty"
+	if imageProtocol == "auto" {
+		kittyCapable = rasterm.IsKittyCapable()
+		if debug {
+			fmt.Fprintf(os.Stderr, "debug: IsKittyCapable()=%v\n", kittyCapable)
+		}
+		if !kittyCapable && os.Getenv("TMUX") != "" {
+			prog := tmuxShowEnv("TERM_PROGRAM")
+			kittyWindowID := tmuxShowEnv("KITTY_WINDOW_ID")
+			if debug {
+				fmt.Fprintf(os.Stderr, "debug: tmux show-environment -g TERM_PROGRAM=%q KITTY_WINDOW_ID=%q\n", prog, kittyWindowID)
+			}
+			kittyCapable = prog == "wezterm" || prog == "ghostty" || kittyWindowID != ""
+		}
+	} else if debug {
+		fmt.Fprintf(os.Stderr, "debug: kitty forced via -image-protocol=kitty\n")
+	}
+
 	switch {
-	case rasterm.IsKittyCapable():
+	case kittyCapable:
+		if debug {
+			fmt.Fprintln(os.Stderr, "debug: using kitty protocol")
+		}
 		rasterm.KittyWriteImage(os.Stdout, img, rasterm.KittyImgOpts{})
 	default:
-		if ok, _ := rasterm.IsSixelCapable(); ok {
+		sixelOK := imageProtocol == "sixel"
+		var sixelErr error
+		if imageProtocol == "auto" {
+			sixelOK, sixelErr = rasterm.IsSixelCapable()
+		}
+		if debug {
+			if imageProtocol == "sixel" {
+				fmt.Fprintln(os.Stderr, "debug: sixel forced via -image-protocol=sixel")
+			} else {
+				fmt.Fprintf(os.Stderr, "debug: IsSixelCapable()=%v err=%v\n", sixelOK, sixelErr)
+			}
+		}
+		if sixelOK {
+			if debug {
+				fmt.Fprintln(os.Stderr, "debug: using sixel protocol")
+			}
 			pImg := image.NewPaletted(img.Bounds(), palette.Plan9)
 			draw.FloydSteinberg.Draw(pImg, img.Bounds(), img, image.Point{})
 			rasterm.SixelWriteImage(os.Stdout, pImg)
+		} else {
+			if debug {
+				fmt.Fprintln(os.Stderr, "debug: no supported terminal graphics protocol detected")
+			}
+			fmt.Println("[no terminal graphics]")
 		}
 	}
 	fmt.Println()
+}
+
+// printShortInfo prints "<runtime>\t<genres>\t<score>" as a single line.
+func printShortInfo(info MovieInfo) {
+	fmt.Printf("%d min\t%s\t%.1f/10\n", info.Runtime, strings.Join(info.Genres, ", "), info.Score)
 }
 
 func printInfo(info MovieInfo, hideTitle bool, wrap int) {

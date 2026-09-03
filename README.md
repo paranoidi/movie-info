@@ -18,10 +18,20 @@ Get an API key from TMDB: Settings → API.
 ### Flags
 
 ```
--show-title    show the movie title/year (hidden by default, e.g. for guessing games)
--wrap int      wrap text output to N characters (0 = no wrap) (default 79)
--init          create a default config file at $XDG_CONFIG_HOME/movie-info/config.json and exit
+-show-title        show the movie title/year (hidden by default, e.g. for guessing games)
+-wrap int          wrap text output to N characters (0 = no wrap) (default 79)
+-short             print a single line: <runtime>\t<genres>\t<score> (no poster)
+-image-protocol    image protocol: auto, kitty, sixel, none (default "auto")
+-debug             print which image protocol was chosen and why
+-init              create a default config file at $XDG_CONFIG_HOME/movie-info/config.json and exit
 ```
+
+Auto-detection reads env vars (`TERM_PROGRAM`, `KITTY_WINDOW_ID`) that tmux
+doesn't forward into the pane's environment. Inside tmux, if those are unset,
+it falls back to `tmux show-environment -g`, which reflects the outer
+terminal that started the tmux server — this can still be wrong (e.g. a tmux
+server started years ago from a different terminal, or one attached from a
+non-kitty-capable client). Use `-image-protocol=kitty` to force it either way.
 
 ### Config file
 
@@ -34,7 +44,8 @@ Run `movie-info -init` to create one to edit:
 {
   "api_key": "",
   "show_title": false,
-  "wrap": 79
+  "wrap": 79,
+  "image_protocol": "auto"
 }
 ```
 
