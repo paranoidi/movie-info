@@ -383,12 +383,17 @@ func imdbIDFromDir(dir string) (string, error) {
 
 // movieNameFromDirName derives a search title from a scene-style directory name,
 // e.g. "The.Matrix.1999.foo.bar.asdf" -> "The Matrix", by treating dots/underscores
-// as spaces and cutting off at the first 4-digit year or scene tag (1080p, remux, etc).
+// as spaces and cutting off at the last 4-digit year or the first scene tag
+// (1080p, remux, etc). The last year is used as the cutoff, not the first, so a
+// year that's part of the title itself (e.g. "1917.2013.1080p" -> "1917") isn't
+// mistaken for the release year.
 func movieNameFromDirName(name string) string {
 	cleaned := strings.NewReplacer(".", " ", "_", " ").Replace(name)
 	cut := len(cleaned)
-	if loc := yearRe.FindStringIndex(cleaned); loc != nil && loc[0] < cut {
-		cut = loc[0]
+	if locs := yearRe.FindAllStringIndex(cleaned, -1); len(locs) > 0 {
+		if last := locs[len(locs)-1]; last[0] < cut {
+			cut = last[0]
+		}
 	}
 	if loc := cutoffTagRe.FindStringIndex(cleaned); loc != nil && loc[0] < cut {
 		cut = loc[0]
