@@ -1,4 +1,4 @@
-module movie-info
+module github.com/paranoidi/movie-info
 
 go 1.26.5
 

@@ -3,6 +3,12 @@
 Show movie info in the terminal, including the cover image (kitty or sixel
 graphics), using [TMDB](https://www.themoviedb.org/).
 
+## Install
+
+```sh
+go install github.com/paranoidi/movie-info@latest
+```
+
 ## Usage
 
 ```sh
