@@ -220,15 +220,16 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 	api := tmdb.Init(tmdb.Config{APIKey: apiKey})
 
 	query := strings.Join(args, " ")
+	year := ""
 	if dirPath != "" {
 		if id, nfoErr := imdbIDFromDir(dirPath); nfoErr == nil {
 			query = id
 		} else {
-			query = movieNameFromDirName(filepath.Base(dirPath))
+			query, year = movieNameFromDirName(filepath.Base(dirPath))
 		}
 	}
 
-	movieID, err := resolveMovieID(api, query)
+	movieID, err := resolveMovieID(api, query, year)
 	if err != nil {
 		return err
 	}
@@ -338,7 +339,9 @@ func movieInfoFrom(m *tmdb.Movie) MovieInfo {
 	}
 }
 
-func resolveMovieID(api *tmdb.TMDb, query string) (int, error) {
+// resolveMovieID finds the TMDB id for query. year (may be "") narrows the
+// search so e.g. Dogman 2018 and Dogman 2023 resolve to different films.
+func resolveMovieID(api *tmdb.TMDb, query string, year string) (int, error) {
 	if imdbIDRe.MatchString(query) {
 		res, err := api.GetFind(query, "imdb_id", nil)
 		if err != nil {
@@ -350,6 +353,17 @@ func resolveMovieID(api *tmdb.TMDb, query string) (int, error) {
 		return res.MovieResults[0].ID, nil
 	}
 
+	if year != "" {
+		res, err := api.SearchMovie(query, map[string]string{"year": year})
+		if err != nil {
+			return 0, err
+		}
+		if len(res.Results) > 0 {
+			return res.Results[0].ID, nil
+		}
+		// ponytail: scene names are sometimes off by one from TMDB's release
+		// year, so fall through to an unfiltered search rather than failing.
+	}
 	res, err := api.SearchMovie(query, nil)
 	if err != nil {
 		return 0, err
@@ -381,24 +395,27 @@ func imdbIDFromDir(dir string) (string, error) {
 	return id, nil
 }
 
-// movieNameFromDirName derives a search title from a scene-style directory name,
-// e.g. "The.Matrix.1999.foo.bar.asdf" -> "The Matrix", by treating dots/underscores
-// as spaces and cutting off at the last 4-digit year or the first scene tag
-// (1080p, remux, etc). The last year is used as the cutoff, not the first, so a
-// year that's part of the title itself (e.g. "1917.2013.1080p" -> "1917") isn't
-// mistaken for the release year.
-func movieNameFromDirName(name string) string {
+// movieNameFromDirName derives a search title and release year from a
+// scene-style directory name, e.g. "The.Matrix.1999.foo.bar.asdf" ->
+// ("The Matrix", "1999"), by treating dots/underscores as spaces and cutting off
+// at the last 4-digit year or the first scene tag (1080p, remux, etc). The last
+// year is used, not the first, so a year that's part of the title itself
+// (e.g. "1917.2013.1080p" -> ("1917", "2013")) isn't mistaken for the release
+// year. year is "" if the name has none.
+func movieNameFromDirName(name string) (title, year string) {
 	cleaned := strings.NewReplacer(".", " ", "_", " ").Replace(name)
 	cut := len(cleaned)
 	if locs := yearRe.FindAllStringIndex(cleaned, -1); len(locs) > 0 {
-		if last := locs[len(locs)-1]; last[0] < cut {
+		last := locs[len(locs)-1]
+		year = cleaned[last[0]:last[1]]
+		if last[0] < cut {
 			cut = last[0]
 		}
 	}
 	if loc := cutoffTagRe.FindStringIndex(cleaned); loc != nil && loc[0] < cut {
 		cut = loc[0]
 	}
-	return strings.TrimSpace(cleaned[:cut])
+	return strings.TrimSpace(cleaned[:cut]), year
 }
 
 // fetchPosterBytes downloads the raw poster image bytes (jpeg) for caching/rendering.
