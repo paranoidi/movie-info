@@ -9,19 +9,19 @@ import (
 
 func TestMovieNameFromDirName(t *testing.T) {
 	cases := map[string]struct{ title, year string }{
-		"The.Matrix.1999.foo.bar.asdf": {"The Matrix", "1999"},
-		"Some_Movie_Name_2020_1080p":   {"Some Movie Name", "2020"},
-		"No.Year.Here":                 {"No Year Here", ""},
-		"Alien 1979":                   {"Alien", "1979"},
-		"The.Matrix.REMUX.foo":         {"The Matrix", ""},
-		"The.Matrix.remastered.foo":    {"The Matrix", ""},
-		"The.Matrix.DTS-HD.foo":        {"The Matrix", ""},
-		"The.Matrix.Bluray.foo":        {"The Matrix", ""},
-		"1917.2019.1080p.foo":          {"1917", "2019"},
-		"The.Matrix.UNRATED.foo":       {"The Matrix", ""},
-		"The.Matrix.PROPER.foo":        {"The Matrix", ""},
-		"Dogman.2018.Foo":              {"Dogman", "2018"},
-		"Dogman.2023.Bar":              {"Dogman", "2023"},
+		"Example.Movie.1999.foo.bar.asdf": {"Example Movie", "1999"},
+		"Some_Movie_Name_2020_1080p":      {"Some Movie Name", "2020"},
+		"No.Year.Here":                    {"No Year Here", ""},
+		"Beacon 1979":                     {"Beacon", "1979"},
+		"Example.Movie.REMUX.foo":         {"Example Movie", ""},
+		"Example.Movie.remastered.foo":    {"Example Movie", ""},
+		"Example.Movie.DTS-HD.foo":        {"Example Movie", ""},
+		"Example.Movie.Bluray.foo":        {"Example Movie", ""},
+		"1234.2019.1080p.foo":             {"1234", "2019"},
+		"Example.Movie.UNRATED.foo":       {"Example Movie", ""},
+		"Example.Movie.PROPER.foo":        {"Example Movie", ""},
+		"Quarry.2018.Foo":                 {"Quarry", "2018"},
+		"Quarry.2023.Bar":                 {"Quarry", "2023"},
 	}
 	for in, want := range cases {
 		if title, year := movieNameFromDirName(in); title != want.title || year != want.year {
