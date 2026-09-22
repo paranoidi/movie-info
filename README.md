@@ -118,10 +118,21 @@ directory, a warning goes to stderr and the movie info prints as usual.
 `-short` is unaffected: it stays a single line.
 
 `-subtitles EN,FI` (or `"subtitles": ["EN", "FI"]` in the config file) narrows
-both subtitle lines to those languages, leaving the audio tracks alone. Codes
-are matched however they're written — `fi`, `FIN` and `FI` all select the same
-track, and `UND` selects untagged ones. A line is left out entirely when no
-track matches.
+both subtitle lines to those languages, leaving the audio tracks alone:
+
+```
+Subtitles: EN, FI (6 more)
+Subtitles (ext): FI (srt) (2 more)
+```
+
+`(6 more)` counts the tracks in other languages that were hidden, so a narrowed line
+is never mistaken for the whole picture — a file with nothing but the languages
+asked for has no marker. When none of them match, the line stays as a bare
+`Subtitles: (6 more)`, which says "subtitles, but not yours" rather than looking
+like no subtitles at all.
+
+Codes are matched however they're written — `fi`, `FIN` and `FI` all select the
+same track, and `UND` selects untagged ones.
 
 ## Build
 

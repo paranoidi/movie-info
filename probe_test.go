@@ -51,16 +51,22 @@ func TestFormatProbe(t *testing.T) {
 	// A language filter narrows the subtitle line; lowercase input still matches,
 	// and audio is left alone.
 	got = formatProbe(doc, []string{"en"})
-	if !strings.Contains(got, "Subtitles: EN×2") || strings.Contains(got, "NL") {
-		t.Errorf("filtered probe text = want only EN subtitles:\n%s", got)
+	if !strings.Contains(got, "Subtitles: EN×2 (1 more)") || strings.Contains(got, "NL") {
+		t.Errorf("filtered probe text = want only EN subtitles, flagged (1 more):\n%s", got)
 	}
 	if !strings.Contains(got, "- UND / aac") {
 		t.Errorf("filtered probe text dropped an audio track:\n%s", got)
 	}
 
-	// A filter nothing matches drops the line rather than printing it empty.
-	if got := formatProbe(doc, []string{"ZZ"}); strings.Contains(got, "Subtitles:") {
-		t.Errorf("unmatched filter still printed a subtitle line:\n%s", got)
+	// A filter nothing matches still reports that subtitles exist, so the line
+	// doesn't read as "no subtitles".
+	if got := formatProbe(doc, []string{"ZZ"}); !strings.Contains(got, "Subtitles: (3 more)") {
+		t.Errorf("unmatched filter = want a bare (3 more) subtitle line:\n%s", got)
+	}
+
+	// Filtering that hides nothing leaves no marker.
+	if got := formatProbe(doc, []string{"en", "nl"}); strings.Contains(got, "more)") {
+		t.Errorf("filter matching every language still flagged (1 more):\n%s", got)
 	}
 }
 
@@ -99,8 +105,8 @@ func TestExternalSubs(t *testing.T) {
 		t.Fatalf("externalSubs(\"\") = %q, want \"\"", got)
 	}
 
-	if got := externalSubs(video, subtitleFilter([]string{"fin"})); got != "FI (ass)" {
-		t.Errorf("externalSubs filtered to FI = %q, want %q", got, "FI (ass)")
+	if got, want := externalSubs(video, subtitleFilter([]string{"fin"})), "FI (ass) (5 more)"; got != want {
+		t.Errorf("externalSubs filtered to FI = %q, want %q", got, want)
 	}
 }
 

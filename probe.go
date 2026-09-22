@@ -173,16 +173,19 @@ func formatProbe(doc probeDoc, langs []string) string {
 }
 
 // formatSubtitleLangs lists subtitle track languages in first-seen order,
-// collapsing repeats into "EN×2". Empty when no subtitle track survives filter.
+// collapsing repeats into "EN×2", with "(N more)" when filter hid some. Empty
+// only when the file has no subtitle tracks at all.
 func formatSubtitleLangs(doc probeDoc, filter map[string]bool) string {
 	var order []string
 	counts := map[string]int{}
+	hidden := 0
 	for _, s := range doc.Streams {
 		if s.CodecType != "subtitle" {
 			continue
 		}
 		code := langCode(s.Tags.Language)
 		if filter != nil && !filter[code] {
+			hidden++
 			continue
 		}
 		if counts[code] == 0 {
@@ -197,7 +200,24 @@ func formatSubtitleLangs(doc probeDoc, filter map[string]bool) string {
 		}
 		parts = append(parts, code)
 	}
-	return strings.Join(parts, ", ")
+	return withMore(parts, hidden)
+}
+
+// withMore joins a filtered listing, flagging with "(N more)" how many tracks the
+// filter hid — so a narrowed line is never mistaken for the whole picture. A line
+// whose languages were all hidden still reports "(N more)" rather than vanishing,
+// which would read as "no subtitles" instead of "none in your languages".
+func withMore(parts []string, hidden int) string {
+	joined := strings.Join(parts, ", ")
+	more := fmt.Sprintf("(%d more)", hidden)
+	switch {
+	case hidden == 0:
+		return joined
+	case joined == "":
+		return more
+	default:
+		return joined + " " + more
+	}
 }
 
 // subtitleFilter turns user-written language codes into the canonical uppercase
@@ -254,7 +274,8 @@ type subKey struct{ lang, ext string }
 
 // externalSubs lists sidecar subtitle files for videoPath — beside it, and in a
 // Subs/ or Subtitles/ subdirectory — as `EN (srt), FI×2 (ass)`. filter narrows
-// them to those languages; nil keeps all. Empty when none survive.
+// them to those languages, appending "(N more)"; nil keeps all. Empty only when
+// there are no sidecar files at all.
 func externalSubs(videoPath string, filter map[string]bool) string {
 	if videoPath == "" {
 		return ""
@@ -264,6 +285,7 @@ func externalSubs(videoPath string, filter map[string]bool) string {
 
 	var order []subKey
 	counts := map[subKey]int{}
+	hidden := 0
 	scan := func(d string, descend bool) []string {
 		var subDirs []string
 		entries, err := os.ReadDir(d)
@@ -284,6 +306,7 @@ func externalSubs(videoPath string, filter map[string]bool) string {
 			}
 			lang := subtitleFileLang(name, stem)
 			if filter != nil && !filter[lang] {
+				hidden++
 				continue
 			}
 			k := subKey{lang: lang, ext: strings.TrimPrefix(ext, ".")}
@@ -306,7 +329,7 @@ func externalSubs(videoPath string, filter map[string]bool) string {
 		}
 		parts = append(parts, fmt.Sprintf("%s (%s)", lang, k.ext))
 	}
-	return strings.Join(parts, ", ")
+	return withMore(parts, hidden)
 }
 
 // subtitleFileLang derives a language code from a subtitle filename, e.g.
