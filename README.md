@@ -27,6 +27,9 @@ Get an API key from TMDB: Settings → API.
 -show-title        show the movie title/year (hidden by default, e.g. for guessing games)
 -wrap int          wrap text output to N characters (0 = no wrap) (default 79)
 -short             print a single line: <runtime>\t<genres>\t<score> (no poster)
+-score             print only the score, e.g. 7.3
+-runtime           print only the runtime in minutes, e.g. 148
+-genre             print only the primary (first listed) genre, e.g. Drama
 -probe             append ffprobe media details for a movie directory
 -subtitles string  only report these subtitle languages, e.g. EN,FI (empty = all)
 -image-protocol    image protocol: auto, kitty, sixel, none (default "auto")

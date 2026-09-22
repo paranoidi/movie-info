@@ -11,12 +11,15 @@ import (
 	"image/draw"
 	_ "image/jpeg"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BourgeoisBear/rasterm"
 	tmdb "github.com/ryanbradynd05/go-tmdb"
@@ -129,6 +132,9 @@ func main() {
 	probe := flag.Bool("probe", false, "append ffprobe media details (video/subtitle/audio tracks) for a movie directory")
 	subtitles := flag.String("subtitles", "", "only report these subtitle languages, e.g. EN,FI (empty = all)")
 	short := flag.Bool("short", false, "print a single line: <runtime>\\t<genres>\\t<score>")
+	score := flag.Bool("score", false, "print only the score, e.g. 7.3")
+	runtime := flag.Bool("runtime", false, "print only the runtime in minutes, e.g. 148")
+	genre := flag.Bool("genre", false, "print only the primary (first listed) genre, e.g. Drama")
 	debug := flag.Bool("debug", false, "print which image protocol was chosen and why")
 	imageProtocol := flag.String("image-protocol", "auto", "image protocol: auto, kitty, sixel, none (override auto-detection, e.g. wezterm/kitty behind tmux misdetect as unsupported)")
 	initFlag := flag.Bool("init", false, "create a default config file at $XDG_CONFIG_HOME/movie-info/config.json and exit")
@@ -151,7 +157,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(flag.Args(), *showTitle, *wrap, *short, *debug, *imageProtocol, *probe, *subtitles); err != nil {
+	// ponytail: first of -short/-score/-runtime/-genre wins, no mutual-exclusion error.
+	oneLine := ""
+	switch {
+	case *short:
+		oneLine = "short"
+	case *score:
+		oneLine = "score"
+	case *runtime:
+		oneLine = "runtime"
+	case *genre:
+		oneLine = "genre"
+	}
+
+	if err := run(flag.Args(), *showTitle, *wrap, oneLine, *debug, *imageProtocol, *probe, *subtitles); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -160,7 +179,7 @@ func main() {
 // run resolves and renders the movie information for args. Any failure to do
 // so — a TMDB error, a bad cache/config file, or an unexpected panic — comes
 // back as a non-nil error so main can exit with status 1.
-func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageProtocol string, probe bool, subtitles string) (err error) {
+func run(args []string, showTitle bool, wrap int, oneLine string, debug bool, imageProtocol string, probe bool, subtitles string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v", r)
@@ -211,8 +230,8 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 	var stalePoster []byte
 	if dirPath != "" {
 		if cache, ok := loadCache(dirPath); ok {
-			if short {
-				printShortInfo(cache.MovieInfo)
+			if oneLine != "" {
+				printOneLine(cache.MovieInfo, oneLine)
 				return nil
 			}
 			renderPoster(cache.posterBytes(), debug, effImageProtocol)
@@ -250,6 +269,7 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 		return err
 	}
 
+	throttle()
 	movie, err := api.GetMovieInfo(movieID, map[string]string{"append_to_response": "credits"})
 	if err != nil {
 		return err
@@ -260,8 +280,8 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 		posterData, _ = fetchPosterBytes(movie.PosterPath)
 	}
 	info := movieInfoFrom(movie)
-	if short {
-		printShortInfo(info)
+	if oneLine != "" {
+		printOneLine(info, oneLine)
 	} else {
 		renderPoster(posterData, debug, effImageProtocol)
 		printInfo(info, !effShowTitle, effWrap)
@@ -357,10 +377,35 @@ func movieInfoFrom(m *tmdb.Movie) MovieInfo {
 	}
 }
 
+// throttle spaces TMDB API requests 600-1200ms apart. Each invocation is a
+// fresh process, so the last request time lives on disk.
+func throttle() {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	throttleAt(filepath.Join(dir, "movie-info", "last-request"))
+}
+
+// ponytail: no file lock, so parallel invocations can race past each other;
+// add flock if runs are ever parallelised.
+func throttleAt(path string) {
+	if data, err := os.ReadFile(path); err == nil {
+		if ns, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			gap := 600*time.Millisecond + rand.N(600*time.Millisecond)
+			time.Sleep(gap - time.Since(time.Unix(0, ns)))
+		}
+	}
+	if os.MkdirAll(filepath.Dir(path), 0o755) == nil {
+		_ = os.WriteFile(path, []byte(strconv.FormatInt(time.Now().UnixNano(), 10)), 0o644)
+	}
+}
+
 // resolveMovieID finds the TMDB id for query. year (may be "") narrows the
 // search so e.g. Quarry 2018 and Quarry 2023 resolve to different films.
 func resolveMovieID(api *tmdb.TMDb, query string, year string) (int, error) {
 	if imdbIDRe.MatchString(query) {
+		throttle()
 		res, err := api.GetFind(query, "imdb_id", nil)
 		if err != nil {
 			return 0, err
@@ -372,6 +417,7 @@ func resolveMovieID(api *tmdb.TMDb, query string, year string) (int, error) {
 	}
 
 	if year != "" {
+		throttle()
 		res, err := api.SearchMovie(query, map[string]string{"year": year})
 		if err != nil {
 			return 0, err
@@ -382,6 +428,7 @@ func resolveMovieID(api *tmdb.TMDb, query string, year string) (int, error) {
 		// ponytail: scene names are sometimes off by one from TMDB's release
 		// year, so fall through to an unfiltered search rather than failing.
 	}
+	throttle()
 	res, err := api.SearchMovie(query, nil)
 	if err != nil {
 		return 0, err
@@ -545,9 +592,23 @@ func renderPoster(data []byte, debug bool, imageProtocol string) {
 	fmt.Println()
 }
 
-// printShortInfo prints "<runtime>\t<genres>\t<score>" as a single line.
-func printShortInfo(info MovieInfo) {
-	fmt.Printf("%d min\t%s\t%.1f/10\n", info.Runtime, strings.Join(info.Genres, ", "), info.Score)
+// printOneLine prints the single-line output selected by -short/-score/-runtime/-genre.
+func printOneLine(info MovieInfo, field string) {
+	switch field {
+	case "score":
+		fmt.Printf("%.1f\n", info.Score)
+	case "runtime":
+		fmt.Println(info.Runtime)
+	case "genre":
+		// TMDB lists genres in its own order; the first is taken as primary.
+		primary := ""
+		if len(info.Genres) > 0 {
+			primary = info.Genres[0]
+		}
+		fmt.Println(primary)
+	default:
+		fmt.Printf("%d min\t%s\t%.1f/10\n", info.Runtime, strings.Join(info.Genres, ", "), info.Score)
+	}
 }
 
 func printInfo(info MovieInfo, hideTitle bool, wrap int) {
