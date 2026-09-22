@@ -1,1 +1,3 @@
 movie-info
+bin/
+taskfile.local.yml

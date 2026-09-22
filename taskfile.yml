@@ -9,6 +9,12 @@ vars:
   GOCYCLO_OVER: "70"
   GOVULNCHECK_VERSION: latest
 
+includes:
+  local:
+    taskfile: ./taskfile.local.yml
+    optional: true
+    flatten: true
+
 tasks:
   setup:
     desc: Install lint tools into ./bin
