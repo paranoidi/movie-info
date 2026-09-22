@@ -51,12 +51,14 @@ type movieCache struct {
 
 // Config is the on-disk shape of $XDG_CONFIG_HOME/movie-info/config.json
 // (~/.config/movie-info/config.json on Linux if XDG_CONFIG_HOME is unset).
-// ShowTitle/Wrap are pointers so "absent" is distinguishable from "false"/"0".
+// ShowTitle/Probe/Wrap are pointers so "absent" is distinguishable from "false"/"0".
 type Config struct {
-	APIKey        string `json:"api_key,omitempty"`
-	ShowTitle     *bool  `json:"show_title,omitempty"`
-	Wrap          *int   `json:"wrap,omitempty"`
-	ImageProtocol string `json:"image_protocol,omitempty"`
+	APIKey        string   `json:"api_key,omitempty"`
+	ShowTitle     *bool    `json:"show_title,omitempty"`
+	Probe         *bool    `json:"probe,omitempty"`
+	Subtitles     []string `json:"subtitles,omitempty"`
+	Wrap          *int     `json:"wrap,omitempty"`
+	ImageProtocol string   `json:"image_protocol,omitempty"`
 }
 
 // configPath returns $XDG_CONFIG_HOME/movie-info/config.json (or the platform
@@ -93,6 +95,8 @@ func loadConfig() (*Config, error) {
 const configTemplate = `{
   "api_key": "",
   "show_title": false,
+  "probe": false,
+  "subtitles": [],
   "wrap": 79,
   "image_protocol": "auto"
 }
@@ -121,6 +125,8 @@ func initConfig() error {
 func main() {
 	showTitle := flag.Bool("show-title", false, "show the movie title/year (hidden by default, e.g. for guessing games)")
 	wrap := flag.Int("wrap", 79, "wrap text output to N characters (0 = no wrap)")
+	probe := flag.Bool("probe", false, "append ffprobe media details (video/subtitle/audio tracks) for a movie directory")
+	subtitles := flag.String("subtitles", "", "only report these subtitle languages, e.g. EN,FI (empty = all)")
 	short := flag.Bool("short", false, "print a single line: <runtime>\\t<genres>\\t<score>")
 	debug := flag.Bool("debug", false, "print which image protocol was chosen and why")
 	imageProtocol := flag.String("image-protocol", "auto", "image protocol: auto, kitty, sixel, none (override auto-detection, e.g. wezterm/kitty behind tmux misdetect as unsupported)")
@@ -144,7 +150,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(flag.Args(), *showTitle, *wrap, *short, *debug, *imageProtocol); err != nil {
+	if err := run(flag.Args(), *showTitle, *wrap, *short, *debug, *imageProtocol, *probe, *subtitles); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -153,7 +159,7 @@ func main() {
 // run resolves and renders the movie information for args. Any failure to do
 // so — a TMDB error, a bad cache/config file, or an unexpected panic — comes
 // back as a non-nil error so main can exit with status 1.
-func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageProtocol string) (err error) {
+func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageProtocol string, probe bool, subtitles string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v", r)
@@ -171,6 +177,14 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 	effShowTitle := showTitle
 	if !setFlags["show-title"] && cfg.ShowTitle != nil {
 		effShowTitle = *cfg.ShowTitle
+	}
+	effProbe := probe
+	if !setFlags["probe"] && cfg.Probe != nil {
+		effProbe = *cfg.Probe
+	}
+	effSubtitles := strings.FieldsFunc(subtitles, func(r rune) bool { return r == ',' || r == ' ' })
+	if !setFlags["subtitles"] && len(cfg.Subtitles) > 0 {
+		effSubtitles = cfg.Subtitles
 	}
 	effWrap := wrap
 	if !setFlags["wrap"] && cfg.Wrap != nil {
@@ -202,6 +216,7 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 			}
 			renderPoster(cache.posterBytes(), debug, effImageProtocol)
 			printInfo(cache.MovieInfo, !effShowTitle, effWrap)
+			printProbe(dirPath, effProbe, effSubtitles)
 			return nil
 		} else if cache != nil {
 			// Old cache schema forces a re-fetch of movie info, but the poster
@@ -249,6 +264,7 @@ func run(args []string, showTitle bool, wrap int, short bool, debug bool, imageP
 	} else {
 		renderPoster(posterData, debug, effImageProtocol)
 		printInfo(info, !effShowTitle, effWrap)
+		printProbe(dirPath, effProbe, effSubtitles)
 	}
 
 	if dirPath != "" {
@@ -340,7 +356,7 @@ func movieInfoFrom(m *tmdb.Movie) MovieInfo {
 }
 
 // resolveMovieID finds the TMDB id for query. year (may be "") narrows the
-// search so e.g. Dogman 2018 and Dogman 2023 resolve to different films.
+// search so e.g. Quarry 2018 and Quarry 2023 resolve to different films.
 func resolveMovieID(api *tmdb.TMDb, query string, year string) (int, error) {
 	if imdbIDRe.MatchString(query) {
 		res, err := api.GetFind(query, "imdb_id", nil)
@@ -396,11 +412,11 @@ func imdbIDFromDir(dir string) (string, error) {
 }
 
 // movieNameFromDirName derives a search title and release year from a
-// scene-style directory name, e.g. "The.Matrix.1999.foo.bar.asdf" ->
-// ("The Matrix", "1999"), by treating dots/underscores as spaces and cutting off
-// at the last 4-digit year or the first scene tag (1080p, remux, etc). The last
-// year is used, not the first, so a year that's part of the title itself
-// (e.g. "1917.2013.1080p" -> ("1917", "2013")) isn't mistaken for the release
+// scene-style directory name, e.g. "Example.Movie.1999.foo.bar.asdf" ->
+// ("Example Movie", "1999"), by treating dots/underscores as spaces and cutting
+// off at the last 4-digit year or the first scene tag (1080p, remux, etc). The
+// last year is used, not the first, so a year that's part of the title itself
+// (e.g. "1234.2013.1080p" -> ("1234", "2013")) isn't mistaken for the release
 // year. year is "" if the name has none.
 func movieNameFromDirName(name string) (title, year string) {
 	cleaned := strings.NewReplacer(".", " ", "_", " ").Replace(name)
@@ -541,6 +557,22 @@ func printInfo(info MovieInfo, hideTitle bool, wrap int) {
 	printField("Genres:   ", strings.Join(info.Genres, ", "), wrap)
 	printField("Director: ", info.Director, wrap)
 	printField("Actors:   ", strings.Join(info.Actors, ", "), wrap)
+}
+
+// printProbe appends the ffprobe media block for a movie directory, separated
+// from the movie info above it by a blank line. Disabled, given a non-directory
+// argument, or probe failure (no ffprobe, no video file) prints nothing —
+// the TMDB output stands on its own.
+func printProbe(dirPath string, enabled bool, langs []string) {
+	if !enabled || dirPath == "" {
+		return
+	}
+	text, err := probeText(dirPath, langs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: probe failed:", err)
+		return
+	}
+	fmt.Printf("\n%s\n", text)
 }
 
 const (
