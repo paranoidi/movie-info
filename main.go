@@ -24,7 +24,7 @@ import (
 
 const posterBaseURL = "https://image.tmdb.org/t/p/w500"
 const cacheFileName = ".movie-info.json"
-const cacheVersion = 1
+const cacheVersion = 2
 
 var imdbIDRe = regexp.MustCompile(`^tt\d+$`)
 var imdbIDInTextRe = regexp.MustCompile(`tt\d+`)
@@ -40,6 +40,7 @@ type MovieInfo struct {
 	Genres   []string `json:"genres"`
 	Director string   `json:"director"`
 	Actors   []string `json:"actors"`
+	Overview string   `json:"overview"`
 }
 
 // movieCache is the on-disk shape of .movie-info.json.
@@ -352,6 +353,7 @@ func movieInfoFrom(m *tmdb.Movie) MovieInfo {
 		Genres:   genres,
 		Director: director,
 		Actors:   actors,
+		Overview: m.Overview,
 	}
 }
 
@@ -557,6 +559,7 @@ func printInfo(info MovieInfo, hideTitle bool, wrap int) {
 	printField("Genres:   ", strings.Join(info.Genres, ", "), wrap)
 	printField("Director: ", info.Director, wrap)
 	printField("Actors:   ", strings.Join(info.Actors, ", "), wrap)
+	printField("Overview: ", info.Overview, wrap)
 }
 
 // printProbe appends the ffprobe media block for a movie directory, separated
