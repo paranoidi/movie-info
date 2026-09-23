@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestMovieNameFromDirName(t *testing.T) {
@@ -55,9 +56,9 @@ func TestLoadCacheStaleVersionStillReturnsData(t *testing.T) {
 
 func TestThrottleAt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "last-request")
-	throttleAt(path) // no file yet: returns immediately
+	throttleAt(path)() // no file yet: returns immediately
 	start := time.Now()
-	throttleAt(path)
+	throttleAt(path)()
 	if d := time.Since(start); d < 600*time.Millisecond || d > 1300*time.Millisecond {
 		t.Fatalf("second call waited %v, want 600-1200ms", d)
 	}

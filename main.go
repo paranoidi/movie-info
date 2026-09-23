@@ -227,16 +227,20 @@ func run(args []string, showTitle bool, wrap int, oneLine string, debug bool, im
 		}
 	}
 
+	showCached := func(c *movieCache) {
+		if oneLine != "" {
+			printOneLine(c.MovieInfo, oneLine)
+			return
+		}
+		renderPoster(c.posterBytes(), debug, effImageProtocol)
+		printInfo(c.MovieInfo, !effShowTitle, effWrap)
+		printProbe(dirPath, effProbe, effSubtitles)
+	}
+
 	var stalePoster []byte
 	if dirPath != "" {
 		if cache, ok := loadCache(dirPath); ok {
-			if oneLine != "" {
-				printOneLine(cache.MovieInfo, oneLine)
-				return nil
-			}
-			renderPoster(cache.posterBytes(), debug, effImageProtocol)
-			printInfo(cache.MovieInfo, !effShowTitle, effWrap)
-			printProbe(dirPath, effProbe, effSubtitles)
+			showCached(cache)
 			return nil
 		} else if cache != nil {
 			// Old cache schema forces a re-fetch of movie info, but the poster
@@ -264,12 +268,24 @@ func run(args []string, showTitle bool, wrap int, oneLine string, debug bool, im
 		}
 	}
 
+	// Wait out the gap since the previous invocation's last API request, then
+	// record this one's once all its requests are done.
+	markRequested := throttle()
+	// Another process launched for the same directory may have written the
+	// cache while we slept.
+	if dirPath != "" {
+		if cache, ok := loadCache(dirPath); ok {
+			showCached(cache)
+			return nil
+		}
+	}
+	defer markRequested()
+
 	movieID, err := resolveMovieID(api, query, year)
 	if err != nil {
 		return err
 	}
 
-	throttle()
 	movie, err := api.GetMovieInfo(movieID, map[string]string{"append_to_response": "credits"})
 	if err != nil {
 		return err
@@ -377,27 +393,31 @@ func movieInfoFrom(m *tmdb.Movie) MovieInfo {
 	}
 }
 
-// throttle spaces TMDB API requests 600-1200ms apart. Each invocation is a
-// fresh process, so the last request time lives on disk.
-func throttle() {
+// throttle spaces TMDB API use 600-1200ms apart between invocations (not
+// within one). Each invocation is a fresh process, so the time of the last
+// request lives on disk. It sleeps, then returns a func that records the
+// finish time; call that once the requests are done.
+func throttle() func() {
 	dir, err := os.UserCacheDir()
 	if err != nil {
-		return
+		return func() {}
 	}
-	throttleAt(filepath.Join(dir, "movie-info", "last-request"))
+	return throttleAt(filepath.Join(dir, "movie-info", "last-request"))
 }
 
 // ponytail: no file lock, so parallel invocations can race past each other;
 // add flock if runs are ever parallelised.
-func throttleAt(path string) {
+func throttleAt(path string) func() {
 	if data, err := os.ReadFile(path); err == nil {
 		if ns, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
 			gap := 600*time.Millisecond + rand.N(600*time.Millisecond)
 			time.Sleep(gap - time.Since(time.Unix(0, ns)))
 		}
 	}
-	if os.MkdirAll(filepath.Dir(path), 0o755) == nil {
-		_ = os.WriteFile(path, []byte(strconv.FormatInt(time.Now().UnixNano(), 10)), 0o644)
+	return func() {
+		if os.MkdirAll(filepath.Dir(path), 0o755) == nil {
+			_ = os.WriteFile(path, []byte(strconv.FormatInt(time.Now().UnixNano(), 10)), 0o644)
+		}
 	}
 }
 
@@ -405,7 +425,6 @@ func throttleAt(path string) {
 // search so e.g. Quarry 2018 and Quarry 2023 resolve to different films.
 func resolveMovieID(api *tmdb.TMDb, query string, year string) (int, error) {
 	if imdbIDRe.MatchString(query) {
-		throttle()
 		res, err := api.GetFind(query, "imdb_id", nil)
 		if err != nil {
 			return 0, err
@@ -417,7 +436,6 @@ func resolveMovieID(api *tmdb.TMDb, query string, year string) (int, error) {
 	}
 
 	if year != "" {
-		throttle()
 		res, err := api.SearchMovie(query, map[string]string{"year": year})
 		if err != nil {
 			return 0, err
@@ -428,7 +446,6 @@ func resolveMovieID(api *tmdb.TMDb, query string, year string) (int, error) {
 		// ponytail: scene names are sometimes off by one from TMDB's release
 		// year, so fall through to an unfiltered search rather than failing.
 	}
-	throttle()
 	res, err := api.SearchMovie(query, nil)
 	if err != nil {
 		return 0, err
