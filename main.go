@@ -226,6 +226,7 @@ func run(args []string, showTitle bool, wrap int, oneLine string, debug bool, im
 			dirPath = args[0]
 		}
 	}
+	printProbe := startProbe(dirPath, effProbe && oneLine == "", effSubtitles)
 
 	showCached := func(c *movieCache) {
 		if oneLine != "" {
@@ -234,7 +235,7 @@ func run(args []string, showTitle bool, wrap int, oneLine string, debug bool, im
 		}
 		renderPoster(c.posterBytes(), debug, effImageProtocol)
 		printInfo(c.MovieInfo, !effShowTitle, effWrap)
-		printProbe(dirPath, effProbe, effSubtitles)
+		printProbe()
 	}
 
 	var stalePoster []byte
@@ -301,7 +302,7 @@ func run(args []string, showTitle bool, wrap int, oneLine string, debug bool, im
 	} else {
 		renderPoster(posterData, debug, effImageProtocol)
 		printInfo(info, !effShowTitle, effWrap)
-		printProbe(dirPath, effProbe, effSubtitles)
+		printProbe()
 	}
 
 	if dirPath != "" {
@@ -640,20 +641,33 @@ func printInfo(info MovieInfo, hideTitle bool, wrap int) {
 	printField("Overview: ", info.Overview, wrap)
 }
 
-// printProbe appends the ffprobe media block for a movie directory, separated
-// from the movie info above it by a blank line. Disabled, given a non-directory
-// argument, or probe failure (no ffprobe, no video file) prints nothing —
-// the TMDB output stands on its own.
-func printProbe(dirPath string, enabled bool, langs []string) {
+// startProbe runs ffprobe for a movie directory in the background so it overlaps
+// the TMDB requests. The returned func waits for it and appends the media block,
+// separated from the movie info above it by a blank line. Disabled, given a
+// non-directory argument, or probe failure (no ffprobe, no video file) prints
+// nothing — the TMDB output stands on its own.
+func startProbe(dirPath string, enabled bool, langs []string) func() {
 	if !enabled || dirPath == "" {
-		return
+		return func() {}
 	}
-	text, err := probeText(dirPath, langs)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "warning: probe failed:", err)
-		return
+	type result struct {
+		text string
+		err  error
 	}
-	fmt.Printf("\n%s\n", text)
+	// Buffered so an early TMDB error return never leaves the goroutine blocked.
+	ch := make(chan result, 1)
+	go func() {
+		text, err := probeText(dirPath, langs)
+		ch <- result{text, err}
+	}()
+	return func() {
+		r := <-ch
+		if r.err != nil {
+			fmt.Fprintln(os.Stderr, "warning: probe failed:", r.err)
+			return
+		}
+		fmt.Printf("\n%s\n", r.text)
+	}
 }
 
 const (
