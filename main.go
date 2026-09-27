@@ -633,6 +633,7 @@ func printInfo(info MovieInfo, hideTitle bool, wrap int) {
 	if !hideTitle {
 		printField("", fmt.Sprintf("%s (%s)", info.Title, info.Year), wrap)
 	}
+	printField("Year:     ", info.Year, wrap)
 	printField("Runtime:  ", fmt.Sprintf("%d min", info.Runtime), wrap)
 	printField("Score:    ", fmt.Sprintf("%.1f/10", info.Score), wrap)
 	printField("Genres:   ", strings.Join(info.Genres, ", "), wrap)

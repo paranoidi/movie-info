@@ -87,6 +87,7 @@ future runs.
 Poster image, then:
 
 - Title / year (hidden by default)
+- Year
 - Runtime
 - TMDB user score
 - Genres
