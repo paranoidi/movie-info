@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"image"
@@ -13,6 +14,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,9 +27,10 @@ import (
 	tmdb "github.com/ryanbradynd05/go-tmdb"
 )
 
+const tmdbBaseURL = "https://api.themoviedb.org/3"
 const posterBaseURL = "https://image.tmdb.org/t/p/w500"
 const cacheFileName = ".movie-info.json"
-const cacheVersion = 2
+const cacheVersion = 3
 
 var imdbIDRe = regexp.MustCompile(`^tt\d+$`)
 var imdbIDInTextRe = regexp.MustCompile(`tt\d+`)
@@ -44,6 +47,16 @@ type MovieInfo struct {
 	Director string   `json:"director"`
 	Actors   []string `json:"actors"`
 	Overview string   `json:"overview"`
+
+	OriginalLanguage string   `json:"original_language"`
+	OriginCountry    []string `json:"origin_country"`
+	SpokenLanguages  []string `json:"spoken_languages"`
+}
+
+// tmdbMovie adds origin_country, which go-tmdb's Movie doesn't expose.
+type tmdbMovie struct {
+	tmdb.Movie
+	OriginCountry []string `json:"origin_country"`
 }
 
 // movieCache is the on-disk shape of .movie-info.json.
@@ -135,6 +148,8 @@ func main() {
 	score := flag.Bool("score", false, "print only the score, e.g. 7.3")
 	runtime := flag.Bool("runtime", false, "print only the runtime in minutes, e.g. 148")
 	genre := flag.Bool("genre", false, "print only the primary (first listed) genre, e.g. Drama")
+	origin := flag.Bool("origin", false, "print only the origin countries, comma-separated, e.g. IN")
+	lang := flag.Bool("lang", false, "print only the original language, e.g. hi")
 	debug := flag.Bool("debug", false, "print which image protocol was chosen and why")
 	imageProtocol := flag.String("image-protocol", "auto", "image protocol: auto, kitty, sixel, none (override auto-detection, e.g. wezterm/kitty behind tmux misdetect as unsupported)")
 	initFlag := flag.Bool("init", false, "create a default config file at $XDG_CONFIG_HOME/movie-info/config.json and exit")
@@ -157,7 +172,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ponytail: first of -short/-score/-runtime/-genre wins, no mutual-exclusion error.
+	// ponytail: first of -short/-score/-runtime/-genre/-origin/-lang wins, no mutual-exclusion error.
 	oneLine := ""
 	switch {
 	case *short:
@@ -168,6 +183,10 @@ func main() {
 		oneLine = "runtime"
 	case *genre:
 		oneLine = "genre"
+	case *origin:
+		oneLine = "origin"
+	case *lang:
+		oneLine = "lang"
 	}
 
 	if err := run(flag.Args(), *showTitle, *wrap, oneLine, *debug, *imageProtocol, *probe, *subtitles); err != nil {
@@ -287,7 +306,7 @@ func run(args []string, showTitle bool, wrap int, oneLine string, debug bool, im
 		return err
 	}
 
-	movie, err := api.GetMovieInfo(movieID, map[string]string{"append_to_response": "credits"})
+	movie, err := fetchMovie(apiKey, movieID)
 	if err != nil {
 		return err
 	}
@@ -354,7 +373,30 @@ func (c *movieCache) posterBytes() []byte {
 	return data
 }
 
-func movieInfoFrom(m *tmdb.Movie) MovieInfo {
+// fetchMovie stands in for go-tmdb's GetMovieInfo so origin_country can be
+// decoded from the same response, without a second request.
+func fetchMovie(apiKey string, id int) (*tmdbMovie, error) {
+	resp, err := http.Get(fmt.Sprintf("%s/movie/%d?api_key=%s&append_to_response=credits", tmdbBaseURL, id, url.QueryEscape(apiKey)))
+	if err != nil {
+		// The *url.Error text contains the URL, and with it the API key.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return nil, fmt.Errorf("fetching movie %d: %w", id, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetching movie %d: TMDB returned %s", id, resp.Status)
+	}
+	var m tmdbMovie
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		return nil, fmt.Errorf("fetching movie %d: %w", id, err)
+	}
+	return &m, nil
+}
+
+func movieInfoFrom(m *tmdbMovie) MovieInfo {
 	year := ""
 	if len(m.ReleaseDate) >= 4 {
 		year = m.ReleaseDate[:4]
@@ -382,6 +424,11 @@ func movieInfoFrom(m *tmdb.Movie) MovieInfo {
 		}
 	}
 
+	spoken := make([]string, len(m.SpokenLanguages))
+	for i, l := range m.SpokenLanguages {
+		spoken[i] = l.Iso639_1
+	}
+
 	return MovieInfo{
 		Title:    m.Title,
 		Year:     year,
@@ -391,6 +438,10 @@ func movieInfoFrom(m *tmdb.Movie) MovieInfo {
 		Director: director,
 		Actors:   actors,
 		Overview: m.Overview,
+
+		OriginalLanguage: m.OriginalLanguage,
+		OriginCountry:    m.OriginCountry,
+		SpokenLanguages:  spoken,
 	}
 }
 
@@ -610,7 +661,7 @@ func renderPoster(data []byte, debug bool, imageProtocol string) {
 	fmt.Println()
 }
 
-// printOneLine prints the single-line output selected by -short/-score/-runtime/-genre.
+// printOneLine prints the single-line output selected by -short/-score/-runtime/-genre/-origin/-lang.
 func printOneLine(info MovieInfo, field string) {
 	switch field {
 	case "score":
@@ -624,6 +675,10 @@ func printOneLine(info MovieInfo, field string) {
 			primary = info.Genres[0]
 		}
 		fmt.Println(primary)
+	case "origin":
+		fmt.Println(strings.Join(info.OriginCountry, ","))
+	case "lang":
+		fmt.Println(info.OriginalLanguage)
 	default:
 		fmt.Printf("%d min\t%s\t%.1f/10\n", info.Runtime, strings.Join(info.Genres, ", "), info.Score)
 	}

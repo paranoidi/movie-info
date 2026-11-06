@@ -30,6 +30,8 @@ Get an API key from TMDB: Settings → API.
 -score             print only the score, e.g. 7.3
 -runtime           print only the runtime in minutes, e.g. 148
 -genre             print only the primary (first listed) genre, e.g. Drama
+-origin            print only the origin countries, comma-separated, e.g. IN
+-lang              print only the original language, e.g. hi
 -probe             append ffprobe media details for a movie directory
 -subtitles string  only report these subtitle languages, e.g. EN,FI (empty = all)
 -image-protocol    image protocol: auto, kitty, sixel, none (default "auto")
@@ -137,6 +139,19 @@ like no subtitles at all.
 
 Codes are matched however they're written — `fi`, `FIN` and `FI` all select the
 same track, and `UND` selects untagged ones.
+
+## paras-commander
+
+movie-info can fill meta columns in
+paras-commander. Copy the entries from
+[`examples/paras-commander-meta.toml`](examples/paras-commander-meta.toml)
+into `~/.config/pc/meta.toml`: one `-short` column, or separate Score and Genre
+columns.
+
+Adjust the `when` regex to your movie library's path. Don't quote `%f` — pc
+quotes it. Put `api_key` in the config file, since pc's shell may not have
+`TMDB_API_KEY`; after the first lookup each directory's `.movie-info.json`
+answers without a network call.
 
 ## Build
 

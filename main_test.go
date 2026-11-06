@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -62,5 +63,32 @@ func TestThrottleAt(t *testing.T) {
 	throttleAt(path)()
 	if d := time.Since(start); d < 600*time.Millisecond || d > 1300*time.Millisecond {
 		t.Fatalf("second call waited %v, want 600-1200ms", d)
+	}
+}
+
+func TestMovieInfoFromLanguageFields(t *testing.T) {
+	var m tmdbMovie
+	err := json.Unmarshal([]byte(`{
+		"title": "The Imaginary Monsoon",
+		"original_language": "hi",
+		"origin_country": ["IN"],
+		"spoken_languages": [{"iso_639_1": "en"}, {"iso_639_1": "hi"}],
+		"credits": {"crew": [{"job": "Director", "name": "Some Director"}]}
+	}`), &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := movieInfoFrom(&m)
+	if got.Title != "The Imaginary Monsoon" || got.Director != "Some Director" {
+		t.Errorf("embedded go-tmdb fields not decoded: %+v", got)
+	}
+	if got.OriginalLanguage != "hi" {
+		t.Errorf("OriginalLanguage = %q", got.OriginalLanguage)
+	}
+	if !slices.Equal(got.OriginCountry, []string{"IN"}) {
+		t.Errorf("OriginCountry = %v", got.OriginCountry)
+	}
+	if !slices.Equal(got.SpokenLanguages, []string{"en", "hi"}) {
+		t.Errorf("SpokenLanguages = %v", got.SpokenLanguages)
 	}
 }

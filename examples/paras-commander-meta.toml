@@ -1,0 +1,33 @@
+# paras-commander meta columns for movie-info. Copy into ~/.config/pc/meta.toml
+# and change the /storage/movies path in `when` to your movie library.
+
+# All of -short in one column; pc splits the tab-separated output and aligns it.
+[[entry]]
+name = "movie-info"
+description = "Movie info for directories under movies/"
+shell_patterns = false
+when = "t d & d ^/storage/movies/?$"
+cache = true
+dirs = "movie-info -short %f"
+
+# Or one sortable column per field.
+[[entry]]
+name = "movie-score"
+column = "Score"
+description = "TMDB user score"
+shell_patterns = false
+when = "t d & d ^/storage/movies/?$"
+cache = true
+sort_on_activation = true
+sort_reverse = true
+dirs = "movie-info -score %f"
+
+[[entry]]
+name = "movie-genre"
+column = "Genre"
+order = 1
+description = "Primary genre"
+shell_patterns = false
+when = "t d & d ^/storage/movies/?$"
+cache = true
+dirs = "movie-info -genre %f"
