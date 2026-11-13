@@ -1,0 +1,29 @@
+# https://golangci-lint.run/
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gocyclo
+  settings:
+    gocyclo:
+      min-complexity: 70
+    errcheck:
+      exclude-functions:
+        # terminal output: nothing useful to do if stdout/stderr is gone
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - io.WriteString
+        - github.com/BourgeoisBear/rasterm.KittyWriteImage
+        - github.com/BourgeoisBear/rasterm.SixelWriteImage
+        # deferred cleanup after a read
+        - (io.ReadCloser).Close
+  exclusions:
+    rules:
+      # test setup calls fail the assertions that follow
+      - path: _test\.go
+        linters: [errcheck]
+
+run:
+  timeout: 5m
